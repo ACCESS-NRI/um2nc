@@ -507,7 +507,10 @@ def process(infile, outfile, args):
         # NB: Information from STASHmaster file is not required by `process`.
         # Hence supress missing STASHmaster warnings.
         warnings.filterwarnings(action="ignore", category=UserWarning, message=r"\sUnable to load STASHmaster")
-        ff = mule.load_umfile(str(infile))
+        if isinstance(infile, tuple):
+            ff = mule.load_umfile(str(infile[0]))
+        else:
+            ff = mule.load_umfile(str(infile))
 
     mv = process_mule_vars(ff)
     cubes = iris.load(infile)

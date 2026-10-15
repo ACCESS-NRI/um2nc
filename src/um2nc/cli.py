@@ -11,6 +11,7 @@ import um2nc
 from um2nc.common import DelayedCubePath
 from um2nc.stashmasters import STASHmaster
 from um2nc.um2netcdf import process, StrictWarning
+from um2nc.drivers.am3 import Am3Driver
 from um2nc.drivers.esm1p5 import Esm1p5Driver
 from um2nc.drivers.esm1p6 import Esm1p6Driver
 
@@ -266,10 +267,32 @@ esm1p6 = driver_subparsers.add_parser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 esm1p6.set_defaults(simple=True, strict=True, verbose=True, model=STASHmaster.ACCESS_ESM1p5.value)
 
+# am3
+am3 = driver_subparsers.add_parser(
+    "am3",
+    description=(
+        "Model driver for automatic UM file to netCDF conversion "
+        "during ACCESS-AM3 simulations."
+    ),
+    help="Model driver for ACCESS-AM3 netCDF conversion.",
+    parents=[copy.deepcopy(common_args), copy.deepcopy(driver_args)],
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+am3.add_argument("--start-time",
+                 help="ISO8601 datetime representing the current cycle point",
+                 required=True)
+am3.add_argument("--end-time",
+                 help="ISO8601 datetime representing the cycle point for the previous conversion",
+                 required=True)
+am3.add_argument("--output-directory",
+                 help="Path to output directory for writing output netCDF files.",
+                 required=True)
+am3.set_defaults(simple=True, strict=True, verbose=True, model=STASHmaster.ACCESS_ESM1p5.value)
+
 
 model_drivers = {
     "esm1p5":  Esm1p5Driver,
-    "esm1p6":  Esm1p6Driver
+    "esm1p6":  Esm1p6Driver,
+    "am3": Am3Driver
 }
 
 # Keep track of all um2nc subcommands
@@ -325,7 +348,7 @@ def run_command(args):
 
         process(args.infile, outfile, args)
     elif args.command == "driver":
-        driver = model_drivers[args.model_driver](Path(args.model_directory), args.one_nc_per_stash_variable)
+        driver = model_drivers[args.model_driver](args)
         driver.run_conversion(args.delete_ff, args)
 
 
