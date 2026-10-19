@@ -88,6 +88,30 @@ class DelayedCubePath:
     def _get_output_dir(self):
         return self.output_path.parent
 
+    @staticmethod
+    def _get_um_version(cube):
+        return cube.metadata.attributes['um_version'].replace('.', 'p')
+
+
+    @staticmethod
+    def _get_time_cell_method(cube):
+        # Get the cell_method for time if there is one
+        for cell_method in cube.metadata.cell_methods:
+            # cell_methods.coord_names is a tuple of coord names
+            if 'time' in cell_method.coord_names:
+                if cell_method.method == "point":
+                    return ".snap"
+                else:
+                    return f".{cell_method.method}"
+
+        return ""
+
+    @staticmethod
+    def _get_dimensions(cube):
+        # Count the number of non-time dimensions
+        ndims = len([coord for coord in cube.dim_coords if coord.name() != "time"])
+        return f"{ndims}d"
+
     def resolve_cube(self, cube: Cube):
         filename = self._build_filename(cube)
         filepath = self._get_output_dir() / filename

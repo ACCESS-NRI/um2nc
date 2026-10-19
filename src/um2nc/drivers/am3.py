@@ -48,6 +48,14 @@ class Am3Driver(ModelDriver):
         # regex pattern for matching input files
         return re.compile(r"^am3a.p(?P<unit>[a-z]).(?P<year>[0-9]+)-(?P<month>[0-9]+)-(?P<day>[0-9]+)$")
 
+    @property
+    def atmoscntl(self):
+        pass
+
+    @property
+    def stashc(self):
+        pass
+
     def convert(self, input_group, output_path, process_args):
         """
         Convert an individual input fields file to netCDF.
@@ -68,6 +76,27 @@ class Am3Driver(ModelDriver):
         --------
         input_paths: List of paths to UM fields files to be converted.
         """
+        # Suggested to find files based on the namelist. Ok so what if we do:
+        # 1. Read ATMOSCNTL
+        # 2. Get nlstcall_pp namelists
+        # 3. Generate a regex based on the filename_base options (hopefully not too fiddly)
+
+
+        # In theory there should only be one stream per file ID
+        #  https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/rose-meta/um-atmos/HEAD/lib/python/macros/output_streams.py#L97-L103
+        # For each stream, generate a dict of its STASH entry. 
+        # At startup, load in the whole STASHC namelist. So then from stash entry we can get the relevant dict for the tim_name, and domain name should it be needed?
+        # I guess that way, perhaps we won't need to 1. read and 2. scour through the namelists over and over again?
+
+
+        filename_base = '/home/565/sw6175/cylc-run/access-am3-configs/20261009-am3-splitdir-3/work/19820101T0000Z/atmos_main/am3a.pe%C'
+        filename_base = 'am3a.pe%C'
+
+        # I guess we replace each "%char" (char can come from a defined subset) with ".*" or whatever?
+        filename_regex = regex_from_filename(filename_base)
+
+        # Try to ensure the same file is not picked up by multiple regexs
+
         um_files = find_matching_files(self.model_directory, self.input_name_pattern)
         print("Found files:")
         print(um_files)
@@ -99,7 +128,7 @@ class Am3Driver(ModelDriver):
         output_path: Path or DelayedCubePath for writing output netCDF.
         """
         if self.one_nc_per_stash_variable:
-            return Am3DelayedCubePath(self.output_dir, self.input_name_pattern)
+            return Am3DelayedCubePath(self.output_dir)
         else:
             input_name = input_group[0].name  #TODO: something better here, also this isn't working
             return self.output_dir / f"{input_name}.nc"
@@ -148,44 +177,37 @@ def group_by_stream(input_paths, pattern):
 
 
 
+# def get_freq(cube, file, atmoscntl, stashc):
+#     item_code = cube.item_code # may need to recalculate...
+#     file_id = get_file_id(file, atmoscntl)
+#     use_name = get_use_name(stashc, file_id)
+#     time_name = get_time_name(stashc, use_name, item_code)
+#     freq = get_time_freq(stashc, time_name)
+    
+
+# def get_file_id(file, atmoscntl):
+#     pass
+
+
 class Am3DelayedCubePath(DelayedCubePath):
-    template = "access-am3.um{um_version}.{dimensions}.{field_name}.{freq}{time_cell_method}{datestamp}.nc"
+    # template = "access-am3.um{um_version}.{dimensions}.{field_name}.{freq}{time_cell_method}{datestamp}.nc"
 
-    def __init__(self, output_dir_path, filename_regex):
+    def __init__(self, output_dir_path):
         self.output_dir_path = output_dir_path
-        self.filename_regex = filename_regex
 
-    @staticmethod
-    def _get_um_version(cube):
-        return cube.metadata.attributes['um_version'].replace('.', 'p')
-
-    @staticmethod
-    def _get_dimensions(cube):
-        # Count the number of non-time dimensions
-        ndims = len([coord for coord in cube.dim_coords if coord.name() != "time"])
-        return f"{ndims}d"
-
-    @staticmethod
-    def _get_time_cell_method(cube):
-        # Get the cell_method for time if there is one
-        for cell_method in cube.metadata.cell_methods:
-            # cell_methods.coord_names is a tuple of coord names
-            if 'time' in cell_method.coord_names:
-                if cell_method.method == "point":
-                    return ".snap"
-                else:
-                    return f".{cell_method.method}"
-
-        return ""
-
+    # TODO: How to best determine the frequency – I'm not sure that we can rely on the streams as we did for ESM1.6
+    # Probably need to get from namelist. Or can we get it from the cube? But you could have multiple frequencies in a file
+    # Bounds could work for means etc, but not for instantaneous data...
+    # Possibly need to get it from the namelist then...
     def _get_freq(self):
-        # Determine the freq from the input filename
+        # Determine the freq from the cube
         # TODO
         return "unknown_freq"
 
     def _get_datestamp(self, cube):
         # Since ESM1.6 output files are yearly, just need YYYY for the datestamp
         # Ensure years with less than 4 digits are formatted with leading zeros
+        # TODO: Need some way to set this appropriately for AM3
         fmt = '%4Y'
 
         # Get the appropriately truncated datetime for the average time
@@ -193,15 +215,11 @@ class Am3DelayedCubePath(DelayedCubePath):
         return f".{d_str}"
 
     def _build_filename(self, cube):
-        d = {
-            "field_name": self._get_var_name(cube),
-            "um_version": self._get_um_version(cube),
-            "dimensions": self._get_dimensions(cube),
-            "time_cell_method": self._get_time_cell_method(cube),
-            "freq": self._get_freq(),
-            "datestamp": self._get_datestamp(cube),
-        }
-        return self.template.format(**d)
+        components = ["access-am3", "um"+self._get_um_version(cube), self._get_dimensions(cube), self._get_time_cell_methods(cube), self._get_freq(), self._get_datestamp(cube), "nc"]
+
+        non_empty_components = [component for component in components if component is not None]
+
+        return ".".join(non_empty_components)
 
     def _get_output_dir(self):
         return self.output_dir_path
