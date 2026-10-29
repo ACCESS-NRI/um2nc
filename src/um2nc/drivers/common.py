@@ -23,8 +23,7 @@ class ModelDriver(ABC):
     which are followed by the drivers.
     """
 
-    def __init__(self, model_directory, one_nc_per_stash_variable=False):
-        self._model_directory = model_directory
+    def __init__(self, one_nc_per_stash_variable=False):
         self._one_nc_per_stash_variable = one_nc_per_stash_variable
         self._input_paths = None
         self._output_paths = None

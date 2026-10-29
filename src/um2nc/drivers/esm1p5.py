@@ -37,7 +37,7 @@ ESM1P5_UNIT_SUFFIXES = {
 class Esm1p5Driver(ModelDriver):
 
     def __init__(self, model_directory, one_nc_per_stash_variable=False):
-        super().__init__(model_directory, one_nc_per_stash_variable)
+        super().__init__(one_nc_per_stash_variable)
         self._atmosphere_dir = model_directory / "atmosphere"
         self._output_dir = self.atmosphere_dir / "netCDF"
         self._unit_suffixes = ESM1P5_UNIT_SUFFIXES

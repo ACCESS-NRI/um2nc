@@ -189,11 +189,6 @@ convert_args.add_argument("outfile", help="Output netCDF file.")
 driver_args = argparse.ArgumentParser(add_help=False)
 
 driver_args.add_argument(
-    "model_directory",
-    type=str,
-    help="Path to a simulation's output directory containing UM files for conversion.",
-)
-driver_args.add_argument(
     "--delete-ff", "-d",
     action="store_true",
     default=False,
@@ -253,7 +248,13 @@ esm1p5 = driver_subparsers.add_parser(
     help="Model driver for ACCESS-ESM1.5 netCDF conversion.",
     parents=[copy.deepcopy(common_args), copy.deepcopy(driver_args)],
     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+esm1p5.add_argument(
+    "model_directory",
+    type=str,
+    help="Path to a simulation's output directory containing UM files for conversion.",
+)
 esm1p5.set_defaults(simple=True, strict=True, verbose=True, model=STASHmaster.ACCESS_ESM1p5.value)
+
 
 # esm1p6
 esm1p6 = driver_subparsers.add_parser(
@@ -265,6 +266,11 @@ esm1p6 = driver_subparsers.add_parser(
     help="Model driver for ACCESS-ESM1.6 netCDF conversion.",
     parents=[copy.deepcopy(common_args), copy.deepcopy(driver_args)],
     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+esm1p6.add_argument(
+    "model_directory",
+    type=str,
+    help="Path to a simulation's output directory containing UM files for conversion.",
+)
 esm1p6.set_defaults(simple=True, strict=True, verbose=True, model=STASHmaster.ACCESS_ESM1p5.value)
 
 # am3
@@ -277,23 +283,16 @@ am3 = driver_subparsers.add_parser(
     help="Model driver for ACCESS-AM3 netCDF conversion.",
     parents=[copy.deepcopy(common_args), copy.deepcopy(driver_args)],
     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-am3.add_argument("--start-time",
-                 help="ISO8601 datetime representing the current cycle point",
-                 required=True)
-am3.add_argument("--end-time",
-                 help="ISO8601 datetime representing the cycle point for the previous conversion",
+am3.add_argument("--input-directories",
+                 help="Space seperated list of input directories containing UM files for conversion.",
+                 nargs="*",
                  required=True)
 am3.add_argument("--output-directory",
                  help="Path to output directory for writing output netCDF files.",
+                 type=Path,
                  required=True)
 am3.set_defaults(simple=True, strict=True, verbose=True, model=STASHmaster.ACCESS_ESM1p5.value)
 
-
-model_drivers = {
-    "esm1p5":  Esm1p5Driver,
-    "esm1p6":  Esm1p6Driver,
-    "am3": Am3Driver
-}
 
 # Keep track of all um2nc subcommands
 all_subcommands = tuple(subparsers.choices.keys())
@@ -348,7 +347,14 @@ def run_command(args):
 
         process(args.infile, outfile, args)
     elif args.command == "driver":
-        driver = model_drivers[args.model_driver](args)
+        match args.model_driver:
+            case "esm1p5":
+                driver = Esm1p5Driver(args.model_directory, args.one_nc_per_stash_variable)
+            case "esm1p6":
+                driver = Esm1p6Driver(args.model_directory, args.one_nc_per_stash_variable)
+            case "am3":
+                driver = Am3Driver(args.input_directories, args.output_directory, args.one_nc_per_stash_variable) 
+
         driver.run_conversion(args.delete_ff, args)
 
 

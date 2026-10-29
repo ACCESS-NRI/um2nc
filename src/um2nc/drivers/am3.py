@@ -5,6 +5,7 @@ Defines a ModelDriver class for running the conversion on ESM1.6 history
 directories
 """
 
+import collections
 import datetime
 import errno
 import os
@@ -14,47 +15,58 @@ import warnings
 
 import f90nml
 
+from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 
 from um2nc.common import DelayedCubePath
-from um2nc.drivers.common import ModelDriver, find_matching_files, get_ff_date
+from um2nc.drivers.common import ModelDriver, find_matching_files
 from um2nc.um2netcdf import process
 
 
+@dataclass
+class Stream:
+    pattern: re.Pattern
+    ppid: str
+    files: list
+
 class Am3Driver(ModelDriver):
 
-    def __init__(self, args):
-            super().__init__(Path(args.model_directory), args.one_nc_per_stash_variable)
-            self._output_dir = Path(args.output_directory)
-            self._start_time = args.start_time
-            self._end_time = args.end_time
+    def __init__(self, input_directories, output_directory, one_nc_per_stash_variable=True):
+            super().__init__(one_nc_per_stash_variable)
+            self._output_directory = output_directory
+            self._input_directory = [Path(dir) for dir in input_directories]
 
     @property
-    def output_dir(self):
-        self._output_dir.mkdir(exist_ok=True)
-        return self._output_dir
+    def output_directory(self):
+        self._output_directory.mkdir(exist_ok=True)
+        return self._output_directory
 
     @cached_property
-    def start_time(self):
-        return datetime.datetime.strptime(self._start_time, "%Y.%m.%d.%H.%S")
+    def input_directories(self):
+        for dir in self._input_dirs:
+            if not dir.exists():
+                raise FileNotFoundError(
+                    errno.ENOENT, os.strerror(errno.ENOENT), dir
+                )
+        return self._input_directories
 
     @cached_property
-    def end_time(self):
-        return datetime.datetime.strptime(self._end_time, "%Y.%m.%d.%H.%S")
-
-    @cached_property
-    def input_name_pattern(self):
-        # regex pattern for matching input files
-        return re.compile(r"^am3a.p(?P<unit>[a-z]).(?P<year>[0-9]+)-(?P<month>[0-9]+)-(?P<day>[0-9]+)$")
-
-    @property
     def atmoscntl(self):
-        pass
+        atmoscntl_nml = f90nml.read(self.input_dirs[0] / "ATMOSCNTL")
+        return atmoscntl_nml
 
-    @property
+    @cached_property
     def stashc(self):
-        pass
+        stashc_nml = f90nml.read(self.input_dirs[0] / "STASHC")
+        return stashc_nml
+
+    @cached_property
+    def input_name_patterns(self):
+        # regex pattern for matching input files
+        um_patterns = [stream_namelist["filename_base"] for stream_namelist in self.atmoscntl["nlstcall_pp"]]
+        return [base_to_regex(um_pattern) for um_pattern in um_patterns]
+
 
     def convert(self, input_group, output_path, process_args):
         """
@@ -76,42 +88,30 @@ class Am3Driver(ModelDriver):
         --------
         input_paths: List of paths to UM fields files to be converted.
         """
-        # Suggested to find files based on the namelist. Ok so what if we do:
-        # 1. Read ATMOSCNTL
-        # 2. Get nlstcall_pp namelists
-        # 3. Generate a regex based on the filename_base options (hopefully not too fiddly)
+        input_groups = []
+        for stream_namelist in self.atmoscntl["nlstcall_pp"]: # TODO: What if only one namelist stream? What if none?
+            um_pattern = stream_namelist["filename_base"]
+            filename_regex = base_to_regex(um_pattern)
+            stream_um_files = [find_matching_files(dir, filename_regex) for dir in self.input_dirs]
+            input_groups.append(stream_um_files)
 
-
-        # In theory there should only be one stream per file ID
-        #  https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/rose-meta/um-atmos/HEAD/lib/python/macros/output_streams.py#L97-L103
-        # For each stream, generate a dict of its STASH entry. 
-        # At startup, load in the whole STASHC namelist. So then from stash entry we can get the relevant dict for the tim_name, and domain name should it be needed?
-        # I guess that way, perhaps we won't need to 1. read and 2. scour through the namelists over and over again?
-
-
-        filename_base = '/home/565/sw6175/cylc-run/access-am3-configs/20261009-am3-splitdir-3/work/19820101T0000Z/atmos_main/am3a.pe%C'
-        filename_base = 'am3a.pe%C'
-
-        # I guess we replace each "%char" (char can come from a defined subset) with ".*" or whatever?
-        filename_regex = regex_from_filename(filename_base)
-
-        # Try to ensure the same file is not picked up by multiple regexs
-
-        um_files = find_matching_files(self.model_directory, self.input_name_pattern)
-        print("Found files:")
-        print(um_files)
-        current_cycle_files = filter_by_datetime(um_files, self.start_time, self.end_time, self.input_name_pattern)
-        print("Files after date filtering:")
-        print(current_cycle_files)
-        input_groups = group_by_stream(current_cycle_files, self.input_name_pattern)
+        # Check that files haven't been matched multiple times
+        all_files = sum(input_groups, [])
+        duplicate_inputs = [item for item, count in collections.Counter(all_files).items() if count > 1]
+        if duplicate_inputs:
+            raise RuntimeError(
+                "The following input files were grouped into more than one file stream: ",
+                f"{duplicate_inputs}. Concatenation of UM files cannot proceed."
+            )
 
         if len(input_groups) == 0:
-            #TODO: More appropriate message
+            input_paths = [dir.resolve for dir in self.input_dirs]
             warnings.warn(
-                f"No files matching pattern '{self.input_name_pattern}' "
-                f"found in {self.model_directory.resolve()}. No files will be "
-                "converted to netCDF."
+                f"No input files were found in directories found in {input_paths}. "
+                f"No files will be converted to netCDF."
             )
+
+        # TODO: What of files with reinit that don't match the output cycle frequency?
 
         return input_groups
 
@@ -134,48 +134,55 @@ class Am3Driver(ModelDriver):
             return self.output_dir / f"{input_name}.nc"
 
 
-def filter_by_datetime(files, start_time, end_time, pattern):
-    filtered_files = []
-    for file in files:
+def base_to_regex(filename_base):
+    month_names_3char = r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
+    season_names_3char = r"(jfm|fma|mam|amj|mjj|jja|jas|aso|son|ond|ndj|djf)"
+    special_char = r"[yvxluzpwtr]"
 
-        year = int(pattern.match(file.name).group("year"))
-        month = int(pattern.match(file.name).group("month"))
-        day = int(pattern.match(file.name).group("day"))
-        file_date = datetime.datetime(year, month, day)
-
-        if start_time <= file_date <= end_time:
-            filtered_files.append(file)
-
-    return filtered_files
-
-
-def group_by_stream(input_paths, pattern):
-    """
-    Group a list of UM output files by their output streams
-
-    Parameters:
-    -----------
-    input_paths: List of paths to input files.
-    pattern: Regex pattern for matching input paths.
-
-    Returns:
-    --------
-    groups: List of tuples containing grouped input paths.
-    """
-    streams = {
-        pattern.match(path.name).group("unit") for path in input_paths
+    replacements = {
+        r"%Y" : r"\\d{4,}", # https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/src/control/top_level/filename_generation_mod.F90#L364
+        r"%m": r"\\d{2,}", # https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/src/control/top_level/filename_generation_mod.F90#L395
+        r"%d": r"\\d{2,}", # https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/src/control/top_level/filename_generation_mod.F90#L427
+        r"%H": r"\\d{2,}", # https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/src/control/top_level/filename_generation_mod.F90#L475
+        r"%M": r"\\d{2,}", # https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/src/control/top_level/filename_generation_mod.F90#L506
+        r"%S": r"\\d{2,}", # https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/src/control/top_level/filename_generation_mod.F90#L521
+        r"%AY": r"\\d{4,}",
+        r"%Am": r"\\d{2,}",
+        r"%Ad": r"\\d{2,}",
+        r"%AH": r"\\d{2,}",
+        r"%AM": r"\\d{2,}",
+        r"%AS": r"\\d{2,}",
+        r"%Q\d*Y": r"\\d+", # TODO: Could insert the correct padding
+        r"%Q\d*m": r"\\d+",
+        r"%Q\d*d": r"\\d+",
+        r"%Q\d*H": r"\\d+",
+        r"%Q\d*M": r"\\d+",
+        r"%Q\d*S": r"\\d+",
+        r"%R\d*Y": r"\\d+",
+        r"%R\d*m": r"\\d+",
+        r"%R\d*d": r"\\d+",
+        r"%R\d*H": r"\\d+",
+        r"%R\d*M": r"\\d+",
+        r"%R\d*S": r"\\d+",
+        r"%b": month_names_3char, # https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/src/control/top_level/filename_generation_mod.F90#L582
+        r"%s": season_names_3char, # https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/src/control/top_level/filename_generation_mod.F90#L596
+        r"%T": r"\\d{4,}", # https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/src/control/top_level/filename_generation_mod.F90#L556
+        r"%\+": r"[\+\-]",
+        r"%%": r"%",
+        r"%N": r"[a-z0-9][0-9][0-9]", # https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/src/control/top_level/filename_generation_mod.F90#L599
+        r"%n": r"[a-z0-9][0-9][0-9][0-9]", # https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/src/control/top_level/filename_generation_mod.F90#L623
+        r"%z": r"[za]",
+        r"%C": rf"(\d{8}_\d{2}|\d{4}{month_names_3char}|\d{8}|m\d{4}{month_names_3char}|s\d{4}{season_names_3char}|{special_char}\d{8}|\d{9}_\d{2})", # https://github.com/ACCESS-NRI/UM/blob/4954ca82035202842f7891366bdba7c70d8ca52e/src/control/top_level/filename_generation_mod.F90#L682
     }
+    filename = Path(filename_base).name
+    filename_regex = filename
+    for um_pattern, python_pattern in replacements.items():
+        filename_regex = re.sub(um_pattern, python_pattern, filename_regex)
 
-    print(streams)
-
-    groups = [
-        tuple(path for path in input_paths if pattern.match(path.name).group("unit") == stream)
-        for stream in streams
-    ]
-    print(groups)
-    return groups
+    return filename_regex
 
 
+def get_freq_from_namelists(cube, )
 
 # def get_freq(cube, file, atmoscntl, stashc):
 #     item_code = cube.item_code # may need to recalculate...

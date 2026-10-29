@@ -20,8 +20,8 @@ ESM1P6_UNIT_SUFFIXES = {
 
 class Esm1p6Driver(Esm1p5Driver):
 
-    def __init__(self, model_directory, one_nc_per_stash_variable):
-        super().__init__(model_directory, one_nc_per_stash_variable)
+    def __init__(self, one_nc_per_stash_variable):
+        super().__init__(one_nc_per_stash_variable)
         self._unit_suffixes = ESM1P6_UNIT_SUFFIXES
         # Write netCDF directly to the atmosphere directory
         self._output_dir = self.atmosphere_dir
