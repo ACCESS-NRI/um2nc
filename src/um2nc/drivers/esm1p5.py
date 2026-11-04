@@ -8,6 +8,7 @@ Adapted from Martin Dix's conversion driver for CM2:
 https://github.com/ACCESS-NRI/access-cm2-drivers/blob/main/src/run_um2netcdf.py
 """
 
+import collections
 import errno
 import os
 import re
@@ -98,6 +99,11 @@ class Esm1p5Driver(ModelDriver):
                 f"found in {self.atmosphere_dir.resolve()}. No files will be "
                 "converted to netCDF."
             )
+
+        # Check for duplicate inputs
+        duplicate_inputs = [item for item, count in collections.Counter(input_paths).items() if count > 1]
+        if duplicate_inputs:
+            raise RuntimeError(f"Duplicate input paths found: {duplicate_inputs}")
 
         return input_paths
 

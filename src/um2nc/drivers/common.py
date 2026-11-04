@@ -50,15 +50,11 @@ class ModelDriver(ABC):
         """Create an input output mapping with unique inputs and outputs paths."""
         input_paths = list(self.get_input_paths())
 
-        # Check for duplicate inputs
-        duplicate_inputs = [item for item, count in collections.Counter(input_paths).items() if count > 1]
-        if duplicate_inputs:
-            raise RuntimeError(f"Duplicate input paths found: {duplicate_inputs}")
-
         # Build mapping and check for duplicate outputs
         mapping = {}
         output_to_inputs = collections.defaultdict(set)
         for input_path in input_paths:
+            # TODO: I don't think this really works, or is valid on DelayedCube objects...
             output_path = self.get_output_path(input_path)
             mapping[input_path] = output_path
             output_to_inputs[output_path].add(input_path)

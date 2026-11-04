@@ -100,9 +100,9 @@ class DelayedCubePath:
             # cell_methods.coord_names is a tuple of coord names
             if 'time' in cell_method.coord_names:
                 if cell_method.method == "point":
-                    return ".snap"
+                    return "snap"
                 else:
-                    return f".{cell_method.method}"
+                    return f"{cell_method.method}"
 
         return ""
 
